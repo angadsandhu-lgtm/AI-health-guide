@@ -2,14 +2,16 @@ import { SOURCES } from "../../../lib/sources";
 
 export const maxDuration = 60;
 
-const SYSTEM = `You are Aria, an AI health information guide. You give general, educational health information in plain language. You are not a doctor and you never diagnose or prescribe.
+const SYSTEM = `You are an AI health guide. You give general, educational health information in plain language. You are not a doctor and you never diagnose or prescribe.
 
-Rules:
-- Always use web search before answering, and base your answer only on what the approved sources say. If they don't cover the question, say so plainly instead of guessing.
-- Structure answers as: a short direct answer, what commonly causes or helps, simple self-care, and when to see a doctor.
-- If symptoms could be an emergency (chest pain, trouble breathing, stroke signs, severe bleeding, overdose, thoughts of self-harm), start by telling the person to call 911 or their local emergency number now. For thoughts of suicide, also mention calling or texting 988 in the US or Canada. Be warm and calm.
+How to answer:
+- People write casually, like "my head hurts" or "my arm is sore". Work out what they most likely mean, then search the approved sources using clear medical terms (for example "headache causes when to see a doctor" or "arm pain causes"). If the first search finds little, search again with different words.
+- Combine what the sources say and connect it to the person's situation: the most common causes, simple self-care, warning signs that need medical attention, and when to see a doctor. Do not add medical claims the sources don't support.
+- Never say you couldn't find something unless two searches really returned nothing useful. In that case, give brief general safety advice and suggest seeing a clinician or pharmacist.
+- End with one or two short follow-up questions that would help narrow things down (how long, how severe, other symptoms).
+- If symptoms could be an emergency (chest pain, trouble breathing, stroke signs, severe bleeding, overdose, arm or jaw pain with chest pressure or sweating, thoughts of self-harm), start by telling the person to call 911 or their local emergency number now. For thoughts of suicide, also mention calling or texting 988 in the US or Canada. Be warm and calm.
 - Do not give personal medication doses. Point to the product label, a pharmacist, or a doctor.
-- Write plain text only: no markdown, no asterisks, no headings. Use short paragraphs and "-" for lists. Keep answers under 250 words.`;
+- Do not write anything before you search. Write plain text only: no markdown, no asterisks, no headings. Use short paragraphs and "-" for lists. Keep answers under 300 words.`;
 
 const EMERGENCY = /chest pain|can'?t breathe|cannot breathe|trouble breathing|short of breath|stroke|overdose|suicid|kill myself|end my life|self.?harm|severe bleeding|unconscious|seizure|anaphyla/i;
 
@@ -42,41 +44,54 @@ export async function POST(req) {
   const last = messages[messages.length - 1];
   if (!last || last.role !== "user" || !last.content.trim()) return err("Please type a question.", 400);
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL || "claude-haiku-5-5",
-      max_tokens: 900,
-      system: SYSTEM,
-      messages,
-      tools: [{
-        type: "web_search_20250305",
-        name: "web_search",
-        max_uses: 3,
-        allowed_domains: SOURCES.map((s) => s.domain),
-      }],
-    }),
-  });
-  if (!r.ok) {
-    console.error("Anthropic error", r.status, await r.text());
-    return err("Aria is unavailable right now. Please try again shortly.", 502);
+  const tools = [{
+    type: "web_search_20250305",
+    name: "web_search",
+    max_uses: 3,
+    allowed_domains: SOURCES.map((s) => s.domain),
+  }];
+
+  let convo = messages;
+  let reply = "";
+  let stop = "";
+  const seen = new Map();
+
+  // Searching can take several steps; keep going if the AI pauses mid-turn.
+  for (let turn = 0; turn < 4; turn++) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || "claude-haiku-5-5",
+        max_tokens: 1500,
+        system: SYSTEM,
+        messages: convo,
+        tools,
+      }),
+    });
+    if (!r.ok) {
+      console.error("Anthropic error", r.status, await r.text());
+      return err("The health guide is unavailable right now. Please try again shortly.", 502);
+    }
+    const data = await r.json();
+    stop = data.stop_reason;
+    for (const b of data.content || []) {
+      if (b.type === "server_tool_use") reply = ""; // drop any text written before a search
+      if (b.type !== "text") continue;
+      reply += b.text;
+      for (const c of b.citations || []) if (c.url && !seen.has(c.url)) seen.set(c.url, c.title || c.url);
+    }
+    if (stop !== "pause_turn") break;
+    convo = [...convo, { role: "assistant", content: data.content }];
   }
 
-  const data = await r.json();
-  let reply = "";
-  const seen = new Map();
-  for (const b of data.content || []) {
-    if (b.type !== "text") continue;
-    reply += b.text;
-    for (const c of b.citations || []) if (c.url && !seen.has(c.url)) seen.set(c.url, c.title || c.url);
-  }
+  if (!reply.trim()) console.error("Empty reply, stop reason:", stop);
   return Response.json({
-    reply: reply.trim() || "I couldn't find that in my approved sources. Please ask a clinician or pharmacist.",
+    reply: reply.trim() || "Sorry, I couldn't put together an answer just now. Please try rephrasing your question, or ask a clinician or pharmacist.",
     sources: [...seen].map(([url, title]) => ({ url, title })),
     emergency: EMERGENCY.test(last.content),
   });

@@ -41,14 +41,14 @@ export default function Home() {
       <div className="wm">Made by {CREATOR}</div>
       <main className="wrap">
         <div className="top">
-          <div className="brand">Aria<small>AI health guide</small></div>
+          <div className="brand">Health Guide<small>AI-powered</small></div>
           <div className="sos-pill">Emergency? Call 911 or your local number</div>
         </div>
 
         {msgs.length === 0 && (
           <section>
             <h1>Health answers, checked against ten medical sources.</h1>
-            <p className="lede">Aria explains symptoms, conditions and healthy habits in plain language. It can't diagnose you or replace a doctor.</p>
+            <p className="lede">Describe what you're feeling or ask a question, and this guide explains it in plain language. It can't diagnose you or replace a doctor.</p>
             <ul className="idx">
               {SOURCES.map((s) => (<li key={s.domain}><b>{s.name}</b><span>{s.domain}</span></li>))}
             </ul>
@@ -79,8 +79,8 @@ export default function Home() {
         </section>
 
         <form onSubmit={(e) => { e.preventDefault(); send(); }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask a health question" maxLength={1000} aria-label="Your health question" />
-          <button disabled={busy || !input.trim()}>Ask Aria</button>
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask a question or describe how you feel" maxLength={1000} aria-label="Your health question" />
+          <button disabled={busy || !input.trim()}>Ask</button>
         </form>
         <footer>
           For information only, not a substitute for care from a licensed clinician.<br />
